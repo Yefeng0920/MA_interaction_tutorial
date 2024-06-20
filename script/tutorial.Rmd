@@ -1,0 +1,581 @@
+---
+title: "Methodological guide: Meta-analytical approaches for analysing stressor effects (or treatment effects in general) and interaction"
+author: Yefeng Yang, Coralie Williams, Kyle Morrison, Jacob Bishop, Jinming Pan, Malgorzata, Lagisz, Shinichi Nakagawa
+date: "last update June 2024"
+output:
+  rmdformats::downcute:
+    code_folding: show
+    self_contained: yes
+    thumbnails: no
+    lightbox: yes
+    downcute_theme: chaos
+  '': default
+subtitle: "A step-by-step illustration (v 1.0)"
+pkgdown:
+  as_is: yes
+bibliography: references.bib
+csl: nature.csl
+link-citations: yes
+---
+
+# Contributors
+
+Yefeng Yang, Coralie Williams, Kyle Morrison, Jacob Bishop, Jinming Pan, Malgorzata Lagisz, Shinichi Nakagawa
+
+# Update
+
+Last update June 2024
+
+# Preamble
+
+Using meta-analytical approaches for modelling interactive effects is in its infancy, there is a risk that the statistical analysis issues in leading journals as we identified in Hu et al. 2024 @hu2024responses could become widely repeated in the future. See also statistical issues we identified in a recent *Nature* paper @siviter2023addendum.
+
+> Hu, N., Bourdeau, P. E., & Hollander, J. (2024). Responses of marine trophic levels to the combined effects of ocean acidification and warming. Nature Communications, 15(1), 3400.
+
+> Siviter, H., Bailes, E. J., Martin, C. D., Oliver, T. R., Koricheva, J., Leadbeater, E., & Brown, M. J. (2023). Addendum: Agrochemicals interact synergistically to increase bee mortality. Nature, 617(7960), E7-E9.
+
+Therefore, we provide a step-by-step tutorial with analytical scripts on how to rigorously analyse multiple stressor effects (or, treatment effects in general) and their interactions using meta-analytical approaches.
+
+# Reproducibility claim
+
+The tutorial was developed by Yefeng Yang, and can be independently reproduced by Coralie Williams and Shinichi Nakagawa. All version information involved in the tutorial are printed at the end (subsection **Software and package versions**).
+
+# Credit
+
+If our paper and tutorial have helped you, please cite the following paper:
+
+> Yefeng Yang, Coralie Williams, Kyle Morrison, Jacob Bishop, Jinming Pan, Malgorzata Lagisz, Shinichi Nakagawa. Statistical issues in multiple stressors effects and their interactions. EcoEvoRxiv, 2024. 
+
+# Contact
+
+If you have any questions, mistakes, or bugs to report, please contact corresponding authors:
+
+- Dr. Yefeng Yang
+
+Evolution & Ecology Research Centre, EERC
+School of Biological, Earth and Environmental Sciences, BEES
+The University of New South Wales, Sydney, Australia
+
+Email: yefeng.yang1@unsw.edu.au
+
+- Professor Shinichi Nakagawa
+
+Department of Biological Sciences, University of Alberta, CW 405, Biological Sciences Building, Edmonton, Canada
+
+Email: s.nakagawa@unsw.edu.au
+
+```{r global options, include=FALSE}
+library(knitr)
+library(rmdformats)
+library(pander)
+library(formatR)
+## global options
+# options(max.print = "75")
+knitr::opts_chunk$set(
+  echo = T, results = "hold", cache = FALSE, prompt = FALSE,
+  tidy = FALSE, comment = NA,
+  message = FALSE, warning = FALSE
+)
+opts_knit$set(width = 75)
+
+```
+
+# Setup your `R` and packages
+
+We use `R` statistical software, existing `R` packages, and custom functions. For the first two, you will first need to download and install, if you do not have them on your machine.
+
+Googling `The R Project for Statistical Computing` you will find it. Choose the version that fits your machine type (i.e., variety of UNIX platforms, Windows and MacOS), download it, and install it on your machine. We also download it directly from [here](https://cran.r-project.org/): https://cran.r-project.org/. 
+
+We also recommend  installing `RStudio` ([download](https://posit.co/products/open-source/rstudio/)), a popular IDE for `R` coding.
+
+Next, you will need to install several `R` packages that will be used for the illustration of meta-analysis of interactive effect. For packages archived at [CRAN](https://cran.r-project.org/), you can use `install.packages()` to install them. For those at Github repositories, use `devtools::install_github()`.
+
+Main packages can be found at the following chunk:
+
+```{r, warning=FALSE, echo=TRUE}
+set.seed(2024) # for reproducibility
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+  library(tidyr) 
+  library(purrr)
+  library(ggplot2)
+  library(here)
+  library(clubSandwich)  
+  library(metafor)
+  library(cowplot)
+  library(patchwork)
+  #library(orchaRd)
+  })
+```
+
+We also provide some additional helper functions that are necessary this tutorial. To use these custom functions, source them with:
+
+```{r, warning=FALSE, echo=TRUE}
+source(here("function","ES calc.R")) # effect size calculation
+source(here("function","Fig.R"))
+source(here("function","Hetero calc.R"))
+```
+
+
+# 1. Read your data
+
+First, we download the example dataset (`OAW_interaction.csv`) from the original authors' [Zenodo reppository](https://doi.org/10.5281/zenodo.10198734):
+https://doi.org/10.5281/zenodo.10198734.
+
+Then, we load it using `.csv` file reading function `read.csv()`:
+
+```{r}
+# load data; remember adjust your own working directory via getwd()
+dt <- read.csv(here("dat", 'data.csv'))
+```
+
+We do a bit of data wrangling to map data from the "raw" data form into the format that is ready for downstream statistical analyses:
+
+```{r}
+# only select variables that are relevant to our illustration
+dt2 <- select(dt, StudyID, Year, Latitude, Longitude, Abs_lat, Region, Region2, Duration, Species, Stressor, Calcifier, BiologicalResponses, TrophicLevel, Trophic_level, LifeStage, share_organism, Nc, Ne, Xc, Xe, Sc, Se)
+
+# convert it into a wide format so that we can calculate different types of effect sizes
+dt_wide <- pivot_wider(dt2, names_from = Stressor,
+                       values_from = c(Ne, Xe, Se),
+                       names_sep ="_")
+# add ob ID which will be used to account for residual heterogeneity in the following section
+dt_wide$Effect_size_ID <- 1:nrow(dt_wide)
+```
+
+# 2. Calculate your effect sizes
+
+Effect sizes can be estimated using two scales: additive and multiplicative. On the additive scale, the mean response value in the stressor group equals the control group's mean plus the stressor effect, quantifying effect sizes as absolute changes. On the multiplicative scale, the stressor effect is a multiplier of the control group's mean, leading to proportional changes expressed as percentages. The same absolute change can result in different relative changes depending on the baseline, making the choice of scale crucial for accurately interpreting the severity and ecological impact of stressor effects.
+
+As noted in the main text, the original authors used the ln-transformed response ratio (LnRR), a multiplicative scale effect size measure, to assess the sign and strength of stressor effects (ocean acidification [OA] and ocean warming [OW]) and their interaction (OA×OW). To examine the robustness of these effects across different measurement scales, we calculate both: 
+
+- __LnRR__
+
+A multiplicative scale effect size measure that quantifies proportional changes,
+
+- __Hedges’ g__
+
+An additive scale effect size measure that quantifies absolute changes and expresses it in units of population standard deviation.
+
+The estimators for LnRR and Hedges’ g have been proposed long time ago by Gurevitch, Jessica and Morrison, Janet A and Hedges, Larry V @gurevitch2000interaction. It is sad to see that they do not take off. You can also find the formula of LnRR in the Methods section of Hu et al. @hu2024responses and the formula of Hedges’ g in the Methods section of our paper.
+
+One interesting PNAS paper @fawcett2012heavy shows that heavy use of mathematical equations in the main text strongly impede communication among biologists (but see @fernandes2012no); papers receiving 28% fewer citations overall for each additional equation per page in the main text. But, do not worry if you feel uncomfortable with cumbersome these mathematical equations. We have converted the equations for LnRR and Hedges’ g into custom functions. You can find them in `/function/ES calc.R`.
+
+OK, let's use the function `effect_set()` (source `ES calc.R` to use it) to compute all necessary effect size estimates and their corresponding sampling errors:
+
+```{r}
+# calculate two main stressor effects and their interaction
+effect_size <- with(dt_wide, mapply(effect_set, 
+                      CC_n = Nc, 
+                      CC_mean = Xc, 
+                      CC_SD = Sc,
+                      EC_n = Ne_OA, 
+                      EC_mean = Xe_OA, 
+                      EC_SD = Se_OA,
+                      CS_n = Ne_OW, 
+                      CS_mean = Xe_OW, 
+                      CS_SD = Se_OW,
+                      ES_n = Ne_interaction, 
+                      ES_mean = Xe_interaction, 
+                      ES_SD = Se_interaction,
+                      percent = "no",
+                      SIMPLIFY = FALSE
+                      ))
+effect_size <- map_dfr(effect_size, I)
+
+# remove NA
+full_info <- which(complete.cases(effect_size) == TRUE)
+dat <- bind_cols(dt_wide, effect_size)
+dat <- dat[full_info, ]
+
+# remove Inf and -Inf
+dat <- dat[!is.infinite(dat$lnRR_E) & !is.infinite(dat$lnRRV_E) &
+             !is.infinite(dat$lnRR_S) & !is.infinite(dat$lnRRV_S) &
+             !is.infinite(dat$lnRR_ES) & !is.infinite(dat$lnRRV_ES) &
+             !is.infinite(dat$SMD_E) & !is.infinite(dat$SMDV_E) &
+             !is.infinite(dat$SMD_S) & !is.infinite(dat$SMDV_S) &
+             !is.infinite(dat$SMD_ES) & !is.infinite(dat$SMDV_ES), ]
+```
+
+Let's check what `effect_set()` returns to us:
+
+```{r}
+kable(dat[,c(1,28,2,29:40)] %>% head(), caption = "Effects of OA, OW, and their interation OA×OW", digits = 3)
+```
+
+**Individual level effect estimated on the multiplicative scale (LnRR):**
+
+- column **lnRR_E**
+
+The estimate of independent effect of ocean acidification (OA) on the multiplicative scale for each observation or experiment.
+
+- column **lnRRV_E**
+
+Sampling variance of lnRR_E.
+
+- column **lnRR_S**
+
+The estimate of independent effect of ocean warming (OW) on the multiplicative scale for each observation or experiment.
+
+- column **lnRRV_S**
+
+Sampling variance of lnRRV_S.
+
+- column **lnRR_ES**
+
+The estimate of combined or interactive effect of OW and OA (OA×OW) on the multiplicative scale for each observation or experiment.
+
+- column **SMDV_E**
+
+Sampling variance of lnRRV_ES.
+
+**Individual level effect estimated on the additive scale (Hedge's g):**
+
+- column **SMD_E**
+
+The estimate of independent effect of ocean acidification (OA) on the multiplicative scale for each observation or experiment.
+
+- column **SMDV_E**
+
+Sampling variance of SMD_E.
+
+- column **SMD_S**
+
+The estimate of independent effect of ocean warming (OW) on the multiplicative scale for each observation or experiment.
+
+- column **SMDV_S**
+
+Sampling variance of SMD_S.
+
+- column **SMD_ES**
+
+The estimate of combined or interactive effect of OW and OA (OA×OW) on the multiplicative scale for each observation or experiment.
+
+- column **SMDV_ES**
+
+Sampling variance of SMD_ES.
+
+**Note:**
+
+After calculating effect size estimates and sampling variances, it is highly recommended to perform exploratory data analysis to use visualisation and transformation to explore your data in a systematic way. Exploratory data analysis is not a formal process with strict rules. Put differently, exploratory data analysis is a state of mind. You should feel free to work on every idea that comes to your mind. But some basic processes you should cover are, for example, (1) summarizing your dataset using descriptive statistics, (2) identify missing values, and (3) visualize your dataset using charts to find some patterns like unusual observations and misspecified variable types. 
+
+Exploratory data analysis is a big topic, and we will not cover it in this tutorial; it deserves another dedicated tutorial. Anyway, remember that the tenet of exploratory data analysis is to learn about the nature of your data, and to become aware of any surprising characteristics or anomalies that might impact your downstream modelling. For our current example dataset, it seems that what has been archived at the Zenodo reppository is already a cleaned and tidied version. So, we just go ahead with the modelling procedure, which is the main focues of our tutorial.
+
+
+# 3. Multilevel meta-analytic intercept model
+
+In terms of meta-analysis, the first question/hypothesis (often the main one) is usually involving estimate global (overall) mean effect across different sources of studies. To answer such a question, a meta-analytic intercept-only model is recommended (see Equation 8 in our main text; for those interested in more details, check our earlier methodological papers @yang2023advanced, @nakagawa2023quantitative).
+
+We will use three different meta-analytic intercept models to separately fit the stratified dataset of OA, OW, and their interaction OA×OW. We use the effect size LnRR as the main, and Hedge's g as the complement (see the later section).
+
+The independent effect of OA across different studies can be estimated with withthe help of `rma.mv()` function @viechtbauer2010conducting. (intercept model for OA):
+
+```{r}
+## impute sampling level VCV matrix
+V_0.5_E <- vcalc(vi = lnRRV_E, cluster = StudyID, obs = Effect_size_ID, rho = 0.5, data = dat) # assuming a constant correlation of 0.5. Note that by default, one should choose the highest level of grouping variable (in our case, StudyID) as the cluster for imputing VCV
+
+## estimate global effect of OA
+str_TL_E <- rma.mv(yi = lnRR_E, V = V_0.5_E, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML") # one can also tune the parameters related to hypothesis testing; for example, setting test="t", dfs="contain"
+summary(str_TL_E)
+```
+
+We can make a nice forest plot to visualize model outputs via `orchard_plot()` @nakagawa2021orchard:
+
+```{r}
+orchard_plot(str_TL_E, mod = "1", group = "StudyID",
+                               trunk.size = 0.3, branch.size = 2,
+                            xlab = "Effect size (LnRR)", flip = FALSE) + labs(title = "Global effect of OA")
+```
+
+Both the inference statistics and figure indicate that there is a statistically significant overall effect of OA (p-value = `r round(str_TL_E$pval,3)`), although the magnitude is (somewhat) small (`r round(str_TL_E$beta[1],3)`, 95% CI [`r round(str_TL_E$ci.lb[1],3)`,`r round(str_TL_E$ci.ub[1],3)`]).
+
+Next, we go ahead with estimate the independent effect of OW across different studies (intercept model for OW):
+
+```{r}
+## impute sampling level VCV matrix
+V_0.5_S <- vcalc(vi = lnRRV_S, cluster = StudyID, obs = Effect_size_ID, rho = 0.5, data = dat)
+## estimate global effect of OW
+str_TL_S <- rma.mv(yi = lnRR_S, V = V_0.5_S, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_S)
+orchard_plot(str_TL_S, mod = "1", group = "StudyID",
+                               trunk.size = 0.3, branch.size = 2,
+                            xlab = "Effect size (LnRR)", flip = FALSE) + labs(title = "Global effect of OW")
+```
+
+We see that statistical evidence does not support a global effect of OW (`r round(str_TL_S$beta[1],3)`, 95% CI [`r round(str_TL_S$ci.lb[1],3)`,`r round(str_TL_S$ci.ub[1],3)`], p-value = `r round(str_TL_S$pval,3)`)
+
+Next, we estimate the combined effect of OA and OW (OA×OW) across different studies (intercept model for OA×OW):
+
+```{r}
+## impute sampling level VCV matrix
+V_0.5_ES <- vcalc(vi = lnRRV_ES, cluster = share_organism, obs = Effect_size_ID, rho = 0.5, data = dat)
+## estimate global effect of OW
+str_TL_ES <- rma.mv(yi = lnRR_ES, V = V_0.5_ES, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_ES)
+orchard_plot(str_TL_ES, mod = "1", group = "StudyID",
+                               trunk.size = 0.3, branch.size = 2,
+                            xlab = "Effect size (LnRR)", flip = FALSE) + labs(title = "Global effect of OA×OW (interactive effect)")
+```
+
+The global combined effect between OA and OW is also statistically negligible (`r round(str_TL_ES$beta[1],3)`, 95% CI [`r round(str_TL_ES$ci.lb[1],3)`,`r round(str_TL_ES$ci.ub[1],3)`], p-value = `r round(str_TL_ES$pval,3)`).
+
+# 4. Heterogeneity quantification
+
+Quantifying and reporting heterogeneity is crucial for assessing the generality or context sensitivity of global mean effects. It is a mandatory procedure of meta-analysis. Without this, claims about the generality of a given stressor effect are unsupported. Global mean effects with high heterogeneity are questionable. Meta-analysis of similar experiments on a single species provides clear interpretation, but interpreting a meta-effect across diverse species and biogeographic contexts is problematic. According to the newly-proposed pluralistic framework of heterogeneity @yang2023measuring, we use three metrics to quantify heterogeneity.
+
+`i2_ml()` provides a convenient way to quantify heterogeneity using I-squared ($I^2$).
+
+Heterogeneity ($I^2$) around the global effect of OA:
+
+```{r}
+t <- data.frame(i2_ml(str_TL_E))
+colnames(t) <- "I-squared"
+rownames(t) <- c("Total", "Between-study", "Within-study")
+kable(t, caption = "Heterogeneity of OA effect: I-squared", digits = 1)
+```
+
+Heterogeneity ($I^2$) around the global effect of OW:
+
+```{r}
+t <- data.frame(i2_ml(str_TL_S))
+colnames(t) <- "I-squared"
+rownames(t) <- c("Total", "Between-study", "Within-study")
+kable(t, caption = "Heterogeneity of OW effect: I-squared", digits = 1)
+```
+
+Heterogeneity ($I^2$) around the global effect of OA×OW:
+
+```{r}
+t <- data.frame(i2_ml(str_TL_ES))
+colnames(t) <- "I-squared"
+rownames(t) <- c("Total", "Between-study", "Within-study")
+kable(t, caption = "Heterogeneity of OA×OW combined effect: I-squared", digits = 1)
+```
+
+We can also calculate the ratio indicating the magnitude of raw heterogeneity (standard deviation) relative to the global effect (coefficient of variation, $CV$). This process can be automated by `cv_ml()` function.
+ 
+Heterogeneity ($CV$) around the global effect of OA:
+
+```{r}
+t <- data.frame(cv_ml(str_TL_E))
+colnames(t) <- "CV"
+rownames(t) <- c("Total", "Between-study", "Within-study")
+kable(t, caption = "Heterogeneity of OA effect: CV", digits = 1)
+```
+
+Heterogeneity ($CV$) around the global effect of OW:
+
+```{r}
+t <- data.frame(cv_ml(str_TL_S))
+colnames(t) <- "I-CV"
+rownames(t) <- c("Total", "Between-study", "Within-study")
+kable(t, caption = "Heterogeneity of OW effect: CV", digits = 1)
+```
+
+Heterogeneity ($CV$) around the global effect of OA×OW:
+
+```{r}
+t <- data.frame(cv_ml(str_TL_ES))
+colnames(t) <- "CV"
+rownames(t) <- c("Total", "Between-study", "Within-study")
+kable(t, caption = "Heterogeneity of OA×OW combined effect: CV", digits = 1)
+```
+
+Lastly, we calculate the 95% prediction intervals ($PIs$), representing the statistical interval where a 95% probability that the true value of a single future experiment will fall within this interval, given the assumptions of the underlying statistical mode. We wrapped the formula for calculating PIs into the function `mod_results()`.
+
+Heterogeneity ($PIs$) around the global effect of OA:
+
+```{r}
+t <- data.frame(mod_results(str_TL_E, group = "StudyID", data = dat)$mod_table[,-c(1,3,4)])
+names(t) <- c("Mean", "Lower bound", "Upper bound")
+kable(t, caption = "Heterogeneity of OA effect: 95% PIs", digits = 3)
+```
+
+Heterogeneity ($PIs$) around the global effect of OW:
+
+```{r}
+t <- data.frame(mod_results(str_TL_S, group = "StudyID", data = dat)$mod_table[,-c(1,3,4)])
+names(t) <- c("Mean", "Lower bound", "Upper bound")
+kable(t, caption = "Heterogeneity of OW effect: 95% PIs", digits = 3)
+```
+
+Heterogeneity ($PIs$) around the global effect of OA×OW:
+
+```{r}
+t <- data.frame(mod_results(str_TL_ES, group = "StudyID", data = dat)$mod_table[,-c(1,3,4)])
+names(t) <- c("Mean", "Lower bound", "Upper bound")
+kable(t, caption = "Heterogeneity of OA×OW combined effect: 95% PIs", digits = 3)
+```
+
+We see that all three metrics indicate highly heterogeneous effects of OA, OW, and OA×OW on marine species.
+
+# 5. Multilevel meta-regression
+
+As said, the interpretation of highly heterogeneous global effect is problematic. Once high heterogeneity is found (which is often the case in the fields other than clinics), we need to conduct moderator analysis to investigate how certain variables, known as moderators, influence the effect sizes across studies. Moderators can be study characteristics (e.g., sample size, study quality), biological characteristics (e.g., age, gender), or intervention characteristics (e.g., type, duration). The goal is to determine if the relationship between the independent variable and the outcome variable changes depending on the level or category of the moderator (again, check our earlier methodological papers @yang2023advanced, @nakagawa2023quantitative for mathematical details if you have interest). Subgroup analysis and meta-regression are the two commonly used ways to perform moderator analysis (for the equivalence between subgroup analysis and meta-regression see @yang2023advanced). Here, we illustrate the use of meta-regression.
+
+## Categorical moderators
+
+Let's use the categorical variable `TrophicLevel` as an example. This variable has four levels:
+
+```{r}
+dat$TrophicLevel <- as.factor(dat$TrophicLevel)
+dat$TrophicLevel <- factor(dat$TrophicLevel, levels = c("top-predator", "meso-predator", "herbivore","primary producer"))
+levels(dat$TrophicLevel)
+```
+
+Including `TrophicLevel` as a moderator, we can estimate whether each of the level can cause systematic changes in effect sizes. As an example, Let's examine the moderating effect of `TrophicLevel` on the OA effect:
+
+```{r}
+str_TL_E_mod <- rma.mv(yi = lnRR_E, V = V_0.5_E, mods = ~ I(TrophicLevel) - 1, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML") # "- 1" (or, equivalently, "+ 0") is a typical trick of removing intercept
+summary(str_TL_E_mod)
+orchard_plot(str_TL_E_mod, mod = "TrophicLevel", group = "StudyID",
+                               trunk.size = 0.3, branch.size = 2,
+                            xlab = "Effect size (LnRR)", flip = FALSE) + labs(title = "Moderating effect of trophic level on OA effect")
+```
+
+Model output and visualization indicate that while OA does not have effects on top-predator, meso-predator, and primary producer, it affects herbivore.
+
+One elegance of meta-regression, in comparison with subgroup analysis, is its capacity comparing the difference between different levels of a moderator. This will use the trick of `+ 1` and setting different levels as the reference in dummy coding. Using `top-predator` as the reference level, we compare the difference between it with other three levels:
+
+```{r}
+str_TL_E_mod2 <- rma.mv(yi = lnRR_E, V = V_0.5_E, mods = ~ I(TrophicLevel) + 1, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_E_mod2)
+```
+
+Using the language of ANOVA, you can call this process *post hoc* multiple comparison tests. In meta-analysis (or mixed-effect model in general), we call it testing linear combinations of model coefficients. We can streamline the linear combinations using `anova()`:
+
+```{r}
+anova(str_TL_E_mod, X=rbind(c(-1,1,0,0), 
+                            c(-1,0,1,0),
+                            c(-1,0,0,1),
+                            c(0,-1,1,0),
+                            c(0,-1,0,1),
+                            c(0,0,-1,1)))
+```
+
+If you are after all pairwise comparisons between the levels, we suggest you to use the `glht()` function from package `multcomp` to specify the levels of interest:
+
+```{r}
+library(multcomp)
+(glht(str_TL_E_mod,linfct=contrMat(c("top-predator"=1,"meso-predator"=1,"herbivore"=1,"primary producer"=1),type="Tukey"))) %>% summary(test=adjusted("none"))
+```
+
+When testing multiple moderators simultaneously using multiple regression, we must control the family-wise error rate due to the multiple testing problem. This is because the likelihood of finding at least one statistically significant moderator increases with the number of tests, raising the probability of Type I errors. For instance, if we test 10 moderators, all unrelated to the outcome, with $\alpha$ = .05 for each, the probability of finding at least one significant result by chance is approximately 40% ($100(1 - 0.95^{10}$)). Therefore, it is essential to use adjustment methods such as the Bonferroni correction or Holm's method to control the family-wise error rate, despite this practice being rare.
+
+## Continuous moderators
+
+Continuous moderators are also common in meta-analysis dataset. Meta-regression with a continuous moderator has exactly the same `R` syntax. Let's use `Latitude` to illustrate how to examine the moderating effect of a continuous variable:
+
+```{r}
+# it is a good practice to certain continuous variable
+dat$Latitude_c <- scale(dat$Latitude, scale = F)
+str_TL_E_mod3 <- rma.mv(yi = lnRR_E, V = V_0.5_E, mods = ~ Latitude_c, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML") # 
+summary(str_TL_E_mod3)
+bubble_plot(str_TL_E_mod3, mod = "Latitude_c", group = "StudyID", xlab = "Latitude (centered)", ylab = "Effect size (LnRR)") + labs(title = "Moderating effect of latitude_c on OA effect")
+```
+
+# 6. Publication bias test
+
+Publication bias in meta-analysis occurs when studies with positive or significant results are more likely to be published than those with negative or non-significant results. This selective publication skews the evidence base, leading to an overestimation of the true effect size. The main consequence of publication bias is that it distorts the results of meta-analyses, potentially leading to misleading conclusions. 
+
+Several methods are used to detect publication bias in meta-analyses:
+
+- **Funnel plot:** 
+
+A scatter plot of the effect sizes from individual studies against a measure of their precision (e.g., standard error). Asymmetry in the funnel plot suggests the presence of publication bias.
+
+- **Egger's test:**
+
+A statistical test that assesses the asymmetry of the funnel plot. It involves regressing the standard normal deviate of the effect size (effect size divided by its standard error) against the standard error. If the intercept of this regression line significantly deviates from zero, it indicates the presence of publication bias.
+
+- **Trim and fill method:** 
+
+A non-parametric method that imputes missing studies to achieve funnel plot symmetry, providing an adjusted overall effect size.
+
+- **Selection model:**
+
+Selection model is a statistical approach used to address publication bias by explicitly modeling the process of study selection. It aims to correct for the bias introduced by the selective publication of studies with significant or positive results.
+
+Most of the existing publication bias test methods are invalid, given the complex data structure of ecological and evolutionary data. Here, we illustrate the use of funnel plot and Egger's test.
+
+A funnel plot can be made by `funnel()`.
+
+As mentioned, a funnel plot visually represents effect size estimates on the x-axis against a measure of precision on the y-axis. Various choices for the y-axis can impact the shape of the funnel plot and the form of the pseudo-confidence region @sterne2001funnel. We show four variants:
+
+```{r}
+par(mfrow=c(2,2))
+funnel(str_TL_E, main="Standard error")
+funnel(str_TL_E, yaxis="vi", main="Sampling variance")
+funnel(str_TL_E, yaxis="seinv", main="Inverse standard error")
+funnel(str_TL_E, yaxis="vinv", main="Inverse sampling variance")
+```
+
+Egger's test is essence a linear model with the standard error of the effect size estimate as the independent variable. The original form of Egger's test is specified via `lm()`. Here, we recommend an extended version of Egger's test using meta-analytic framework:
+
+```{r}
+# calculate SE
+dat$lnRRSE_E <- sqrt(dat$lnRRV_E)
+tr_TL_E_pub <- rma.mv(yi = lnRR_E, V = V_0.5_E, mods = ~ lnRRSE_E, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML") # 
+summary(tr_TL_E_pub)
+bubble_plot(tr_TL_E_pub, mod = "lnRRSE_E", group = "StudyID", xlab = "Standard error", ylab = "Effect size (LnRR)") + labs(title = "Publication bias detection based on Egger's test")
+```
+
+The non-significant model coefficient of standard error (`lnRRSE_E`) indicates that there is no publication bias. Strictly speaking, we can only conclude that the funnel is symmetric based on the results of Egger's test.
+
+# 7. Test the scale dependence
+
+In the statistical literature, it is well-known that the outcomes of isolated and combined effects depend on whether an additive or multiplicative measurement scale is used. Only reporting one scale will lead to the potential interpretational pitfalls interms of statistical inference and effect size magnitude. Therefore, it is necessary to test the robustness of the results against the measurement scale. In the earlier section, our illustrations are based on the multiplicative scale (LnRR). We should do parallel analyses on additive scale (Hedges' g). For simplicity, we only show the analyses leading to different conclusions between two measurement scales.
+
+## Inference misinterpretation
+
+For multiplicative scale, there is a significant synergistic interaction between OA and OW on tropical species:
+
+```{r}
+## moderating effect of Region2 on multiplicative scale
+V_0.5_ES <- vcalc(vi = lnRRV_ES, cluster = StudyID, obs = Effect_size_ID, rho = 0.5, data = dat)
+dat$Region2 <- as.factor(dat$Region2)
+dat$Region2 <- factor(dat$Region2, levels = c("Temperate", "Sub-tropical", "Tropical"))
+str_TL_ES_LnRR <- rma.mv(yi = lnRR_ES, V = V_0.5_ES, mods = ~ Region2 - 1, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_ES_LnRR)
+```
+
+However, the interaction becomes not significantly different from additive scale:
+
+```{r}
+V_0.5_ES <- vcalc(vi = SMDV_ES, cluster = StudyID, obs = Effect_size_ID, rho = 0.5, data = dat)
+str_TL_ES_SMD <- rma.mv(yi = SMD_ES, V = V_0.5_ES, mods = ~ Region2 - 1, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_ES_SMD)
+```
+
+## Magnitude misinterpretation
+
+For multiplicative scale, OA had a small detrimental effect on herbivores:
+
+```{r}
+V_0.5_E <- vcalc(vi = lnRRV_E, cluster = StudyID, obs = Effect_size_ID, rho = 0.5, data = dat)
+dat$TrophicLevel <- as.factor(dat$TrophicLevel)
+dat$TrophicLevel <- factor(dat$TrophicLevel, levels = c("top-predator", "meso-predator", "herbivore","primary producer"))
+str_TL_E_lnRR <- rma.mv(yi = lnRR_E, V = V_0.5_E, mods = ~ TrophicLevel - 1, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_E_lnRR)
+```
+
+However, an extremely large detrimental effect (according to Cohen’s interpretation guidelines) was found on the additive scale:
+
+```{r}
+V_0.5_E <- vcalc(vi = SMDV_E, cluster = StudyID, obs = Effect_size_ID, rho = 0.5, data = dat)
+str_TL_E2_SMD <- rma.mv(yi = SMD_E, V = V_0.5_E, mods = ~ TrophicLevel - 1, random = list(~1 | StudyID, ~1 | Effect_size_ID), data = dat, method = "REML")
+summary(str_TL_E2_SMD)
+```
+
+# License  
+
+This documented is licensed under the following license: [CC Attribution-Noncommercial-Share Alike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en).  
+
+# Software and package versions  
+
+```{r}
+sessionInfo() %>% pander()
+```
+
+# References  
