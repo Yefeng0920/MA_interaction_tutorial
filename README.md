@@ -17,7 +17,14 @@ Using meta-analytical approaches for modelling interactive effects is in its inf
 
 > Siviter, H., Bailes, E. J., Martin, C. D., Oliver, T. R., Koricheva, J., Leadbeater, E., & Brown, M. J. (2023). Addendum: Agrochemicals interact synergistically to increase bee mortality. Nature, 617(7960), E7-E9.
 
-Therefore, we provide a step-by-step tutorial with analytical scripts on how to rigorously analyse multiple stressor effects (or, treatment effects in general) and their interactions using meta-analytical approaches.
+Therefore, we provide a step-by-step tutorial with analytical scripts on rigorously analyzing multiple stressor effects (or, treatment effects in general) and their interactions using meta-analytical approaches.
+
+# Credit
+
+If our paper and tutorial have helped you, please cite the following paper:
+
+> Yefeng Yang, Coralie Williams, Kyle Morrison, Jacob Bishop, Jinming Pan, Malgorzata Lagisz, Shinichi Nakagawa. Statistical issues in multiple stressors effects and their interactions. EcoEvoRxiv, 2024.
+
 
 ## Structure
 
