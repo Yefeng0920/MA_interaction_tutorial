@@ -5,8 +5,19 @@
 ## Last update: June 2024
 
 
-# Transparency and Openness
-The authors affirm that the manuscript is an honest, accurate, and transparent account of the study being reported, and no important aspects of the study have been omitted. Data, materials, and code are available in this GitHub repository.
+# Reproducibility claim
+
+The tutorial was developed by Yefeng Yang, and can be independently reproduced by Coralie Williams and Shinichi Nakagawa. All version information involved in the tutorial are printed at the end (subsection Software and package versions).
+
+# Preamble
+
+Using meta-analytical approaches for modelling interactive effects is in its infancy, there is a risk that the statistical analysis issues in leading journals as we identified in a paper published in Nature Communications could become widely repeated in the future. See also issues we identified in a recent Nature paper.
+
+> Hu, N., Bourdeau, P. E., & Hollander, J. (2024). Responses of marine trophic levels to the combined effects of ocean acidification and warming. Nature Communications, 15(1), 3400.
+
+> Siviter, H., Bailes, E. J., Martin, C. D., Oliver, T. R., Koricheva, J., Leadbeater, E., & Brown, M. J. (2023). Addendum: Agrochemicals interact synergistically to increase bee mortality. Nature, 617(7960), E7-E9.
+
+Therefore, we provide a step-by-step tutorial with analytical scripts on how to rigorously analyse multiple stressor effects (or, treatment effects in general) and their interactions using meta-analytical approaches.
 
 ## Structure
 
